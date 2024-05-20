@@ -1,0 +1,9 @@
+fastapi
+pydantic
+pandas
+langchain
+langchain_experimental
+python-dotenv
+uvicorn
+boto3
+requests
