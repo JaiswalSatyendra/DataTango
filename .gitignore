@@ -10,8 +10,9 @@ test_dataset.csv
 # Ignore all CSV files (if desired)
 #*.csv
 
-# Ignore noStreamlit directory
-noStreamlit/
+# Ignore python files
+test1.py
+Terminal_code.py
 
 # Ignore other potential environment-related files
 .DS_Store
