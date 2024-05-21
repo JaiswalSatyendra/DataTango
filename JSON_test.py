@@ -11,7 +11,7 @@ import json
 
 def process_data_and_save_to_mongodb(user_id, project_id):
     # Load the API key and MongoDB URL from the .env file
-    load_dotenv()
+    
     openai_api_key = os.getenv("OPENAI_API_KEY")
     mongo_uri = os.getenv("MONGODB_URL")
 
@@ -59,9 +59,38 @@ def process_data_and_save_to_mongodb(user_id, project_id):
 
     # Exit the loop as we have found and processed the matching file
     
+# Function to get questions from MongoDB
+def get_questions(user_id, survey_id):
+    # Load environment variables
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    mongo_uri = os.getenv("MONGODB_URL")
 
+    # Connect to MongoDB
+    client = MongoClient(mongo_uri)
+    db = client["convertml-test"]
+    collection = db["datatango"]
+
+    # Find the document containing the questions
+    document = collection.find_one({"user_id": user_id, "survey_id": survey_id})
+
+    if document:
+        # Extract the questions from the document
+        questions = document.get("questions", [])
+        return questions
+    else:
+        return None
 # Example usage
 if __name__ == "__main__":
-    user_id = "12345"  # Replace with the actual user_id
-    project_id = "9876"  # Replace with the actual project_id
-    process_data_and_save_to_mongodb(user_id, project_id)
+    load_dotenv()
+    user_id = "12345678"  # Replace with the actual user_id
+    project_id = "123"  # Replace with the actual project_id
+    survey_id = "survey123" 
+   # process_data_and_save_to_mongodb(user_id, project_id)
+    questions = get_questions(user_id, survey_id)
+
+    if questions is not None:
+        print(f"Questions for user_id {user_id} and survey_id {survey_id}:")
+        for question in questions:
+            print(question)
+    else:
+        print(f"No questions found for user_id {user_id} and survey_id {survey_id}.")
