@@ -50,65 +50,10 @@ file_formats = {
 }
 
 
-def extract_project_id(file_path):
-    # Extract the project ID from the file name
-    filename = os.path.basename(file_path)
-    project_id = filename.split("_")[0]
-    return project_id
 
-def read_csv_file(user_id, project_id):
-    # Construct the directory path
-    directory_path = f"/home/ubuntu/Satya/DataTango/tmp/{user_id}/gold/"
 
-    # Find all CSV files in the directory
-    csv_files = glob.glob(os.path.join(directory_path, '*.csv'))
 
-    # Iterate over each CSV file
-    for file_path in csv_files:
-        # Extract the project ID from the file name
-        file_project_id = extract_project_id(os.path.basename(file_path))
 
-        # Check if the project ID matches the provided project_id
-        if file_project_id == project_id:
-            # Read the CSV file into a Pandas DataFrame
-            print(file_path)
-            df = pd.read_csv(file_path)
-
-            return df
-    else:
-        print("Error: More than one CSV file found or no CSV file found in the directory.")
-        return None
-
-# def read_csv_file(userid):
-#     # Construct the directory path
-#     directory_path = f"/home/ubuntu/Satya/DataTango/tmp/{userid}/gold/"
-
-#     # Find the CSV file in the directory
-#     csv_files = glob.glob(os.path.join(directory_path, '*.csv'))
-
-#     if len(csv_files) == 1:
-#         # Assuming there is only one CSV file, directly access the first file in the list
-#         file_path = csv_files[0]
-
-#         # Read the CSV file into a Pandas DataFrame
-#         df = pd.read_csv(file_path)
-
-#         return df
-#     else:
-#         print("Error: More than one CSV file found or no CSV file found in the directory.")
-#         return None
-
-# Function to load data from provided file path
-def load_data(file_path):
-    try:
-        ext = os.path.splitext(file_path)[1][1:].lower()
-    except:
-        ext = file_path.split(".")[-1]
-    if ext in file_formats:
-        return file_formats[ext](file_path)
-    else:
-        print(f"Unsupported file format: {ext}")
-        return None
 
 # Retrieve OpenAI API key from environment variables
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -125,16 +70,6 @@ response_cache = TTLCache(maxsize=128, ttl=24 * 60 * 60)
 llm = ChatOpenAI(
     temperature=0, model="gpt-4o-2024-05-13", openai_api_key=openai_api_key, streaming=True
 )
-
-
-# Unwanted keywords or phrases indicating irrelevant responses
-unwanted_keywords = [
-    "data preparation", "data cleaning", "exploratory data analysis", 
-    "statistical analysis", "regression model", "boxplot", "scatter plot"
-]
-
-def contains_unwanted_keywords(response: str, keywords: list) -> bool:
-    return any(keyword in response.lower() for keyword in keywords)
 
 # Initialize pandas DataFrame agents
 pandas_df_agents = {}
@@ -191,42 +126,24 @@ def is_similar_to_bot_identity(prompt):
     return False
 
 
-@app.post("/sns")
-async def receive_sns_message(request: Request):
-    message = await request.json()
-    logger.info("-------")
-    logger.info(message)
-    header = request.headers["x-amz-sns-message-type"]
 
-    if header == "SubscriptionConfirmation" and "SubscribeURL" in message:
-        # Visit the SubscribeURL to confirm the subscription automatically
-        subscribe_url = message["SubscribeURL"]
-        response = requests.get(subscribe_url)
-        return {"status": "Subscription confirmed"}
-    elif header == "Notification":
-        # Handle notification here
-        await download_file(message["Message"])
-        return {"status": "file downloaded", "message": message["Message"]}
-    else:
-        return {"status": "Unsupported SNS message type"}
+# Unwanted keywords or phrases indicating irrelevant responses
+unwanted_keywords = [
+    "data preparation", "data cleaning", "exploratory data analysis", 
+    "statistical analysis", "regression model", "boxplot", "scatter plot"
+]
 
-    return {"status": "OK"}
+def contains_unwanted_keywords(response: str, keywords: list) -> bool:
+    return any(keyword in response.lower() for keyword in keywords)
 
 
 
-
-@app.get("/questions1/{user_id}/{project_id}")
-def get_questions(user_id: str, project_id: str):
-    # Find the document containing the questions
-    document = collection.find_one({"user_id": user_id, "project_id": project_id})
-
-    if document:
-        # Extract the questions from the document
-        questions = document.get("questions", [])
-    else:
-        return {"message": "Document not found"}
-
-    return {"questions": questions}
+def read_csv_file(user_id, project_id):
+    # Construct the directory path
+    
+    df = pd.read_csv("ccg_survey_continued_amber.csv")
+    print(df.head(2))
+    return df
 
 
 
@@ -268,85 +185,18 @@ def get_questions(user_id: str, project_id: str):
             llm,
             df,
             verbose=True,
-            #agent_type=AgentType.OPENAI_FUNCTIONS,
-            agent_type="openai-tools",
+            agent_type=AgentType.OPENAI_FUNCTIONS,
             handle_parsing_errors=True,
         )
 
     return {"questions": questions}
 
 
+
+
+
 # Route to handle user interactions
 @app.post("/chat1/{user_id}/{project_id}")
-async def generateText(user_id: str, project_id: str, request: Request) -> JSONResponse:
-    prompt = (await request.json()).get("prompt")
-
-    # Check if the conversations are already cached
-    cache_key = f"conversations-{user_id}-{project_id}"
-    if cache_key in response_cache:
-        conversations = response_cache[cache_key]["conversations"]
-    else:
-        # Initialize an empty list if conversations are not cached
-        conversations = []
-
-    # Add the current conversation to the history
-    conversations.append({"user_content": prompt, "bot_content": ""})
-
-    # Check if the response is cached based on conversation history
-    conversation_key = "-".join([conv["user_content"] for conv in conversations])
-    cache_key = f"responses-{user_id}-{project_id}-{conversation_key}"
-    if cache_key in response_cache:
-        response = response_cache[cache_key]
-    else:
-        if is_similar_to_bot_identity(prompt):
-            response = "I am CML Copilot, how can I help you?"
-        else:
-            # Check if the pandas DataFrame agent is initialized for the cache_key
-            if cache_key not in pandas_df_agents:
-                # Find the document containing the questions
-                document = collection.find_one({"user_id": user_id, "project_id": project_id})
-
-                if document:
-                    # Extract the questions and file_path from the document
-                    questions = document.get("questions", [])
-                    file_path = document.get("file_name", "")
-
-                    # Load the dataset using the file_path
-                    #df = load_data(file_path)   ### as per userid-----------------------------------------------------
-                    df=read_csv_file(user_id,project_id)
-
-                    if df is None:
-                        return JSONResponse({"text": "Failed to load DataFrame"})
-
-                    pandas_df_agents[cache_key] = create_pandas_dataframe_agent(
-                        llm,
-                        df,
-                        verbose=True,
-                        #agent_type=AgentType.OPENAI_FUNCTIONS,
-                        agent_type="openai-tools",
-                        handle_parsing_errors=True,
-                    )
-                else:
-                    return JSONResponse({"text": "Document not found"})
-
-            response = pandas_df_agents[cache_key].run(conversations)
-
-            # Filter out visualization-related responses
-            response = filter_response(response)
-
-            # Cache the response with a 1-day expiry time
-            response_cache[cache_key] = response
-
-    # Update the cache with the updated conversations
-    response_cache[cache_key] = response
-    response_cache[f"conversations-{user_id}-{project_id}"] = {"conversations": conversations}
-
-    return JSONResponse({"text": response})
-
-
-
-# Route to handle user interactions
-@app.post("/chat2/{user_id}/{project_id}")
 async def generateText(user_id: str, project_id: str, request: Request) -> JSONResponse:
     prompt = (await request.json()).get("prompt")
 
@@ -380,8 +230,7 @@ async def generateText(user_id: str, project_id: str, request: Request) -> JSONR
                 llm,
                 df,
                 verbose=True,
-                #agent_type=AgentType.OPENAI_FUNCTIONS,
-                agent_type="openai-tools",
+                agent_type=AgentType.OPENAI_FUNCTIONS,
                 handle_parsing_errors=True,
             )
 
@@ -410,7 +259,6 @@ async def generateText(user_id: str, project_id: str, request: Request) -> JSONR
     #return JSONResponse(response)
     return response
     #return JSONResponse({"text": response})
-
 
 @app.post("/chat/{user_id}/{project_id}")
 async def generate_text(user_id: str, project_id: str, request: Request) -> JSONResponse:
@@ -446,8 +294,7 @@ async def generate_text(user_id: str, project_id: str, request: Request) -> JSON
                     llm,
                     df,
                     verbose=True,
-                   # agent_type=AgentType.OPENAI_FUNCTIONS,
-                    agent_type="openai-tools",
+                    agent_type=AgentType.OPENAI_FUNCTIONS,
                     handle_parsing_errors=True,
                 )
                 response = pandas_df_agents[cache_key].run(prompt)
@@ -476,11 +323,8 @@ async def generate_text(user_id: str, project_id: str, request: Request) -> JSON
     )
 
     # Ensure the response is returned as JSON
-  #  print(type(response))
-    print("------------------------------------------")
-   # print(response)
-    return response
-    #return JSONResponse({"text": response})
+    return JSONResponse({"text": response})
+
 
 
 if __name__ == "__main__":
