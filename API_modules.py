@@ -15,6 +15,7 @@ from fuzzywuzzy import fuzz
 from fastapi.middleware.cors import CORSMiddleware
 import glob
 from download_s3 import download_file
+from langchain_core.exceptions import OutputParserException
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,12 +72,12 @@ def read_csv_file(user_id, project_id):
         # Check if the project ID matches the provided project_id
         if file_project_id == project_id:
             # Read the CSV file into a Pandas DataFrame
-            print(file_path)
+            logger.info(file_path)
             df = pd.read_csv(file_path)
 
             return df
     else:
-        print("Error: More than one CSV file found or no CSV file found in the directory.")
+        logger.info("Error: More than one CSV file found or no CSV file found in the directory.")
         return None
 
 # def read_csv_file(userid):
@@ -95,7 +96,7 @@ def read_csv_file(user_id, project_id):
 
 #         return df
 #     else:
-#         print("Error: More than one CSV file found or no CSV file found in the directory.")
+#         logger.info("Error: More than one CSV file found or no CSV file found in the directory.")
 #         return None
 
 # Function to load data from provided file path
@@ -107,7 +108,7 @@ def load_data(file_path):
     if ext in file_formats:
         return file_formats[ext](file_path)
     else:
-        print(f"Unsupported file format: {ext}")
+        logger.info(f"Unsupported file format: {ext}")
         return None
 
 # Retrieve OpenAI API key from environment variables
@@ -115,7 +116,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # Check if OpenAI API key is available
 if not openai_api_key:
-    print("OpenAI API key is missing. Please make sure it's set in your environment variables.")
+    logger.info("OpenAI API key is missing. Please make sure it's set in your environment variables.")
     exit()
 
 # Initialize TTLCache for caching responses with a 1-day expiry time
@@ -123,7 +124,7 @@ response_cache = TTLCache(maxsize=128, ttl=24 * 60 * 60)
 
 # Initialize ChatOpenAI instance
 llm = ChatOpenAI(
-    temperature=0, model="gpt-4o-2024-05-13", openai_api_key=openai_api_key, streaming=True
+    temperature=0, model="gpt-4-turbo", openai_api_key=openai_api_key, streaming=True
 )
 
 
@@ -395,7 +396,7 @@ async def generateText(user_id: str, project_id: str, request: Request) -> JSONR
         response = filter_response(response)
     # Update the last conversation with the bot's response
     conversations[-1]["bot_content"] = response
-   # print("final data-->",conversations)
+   # logger.info("final data-->",conversations)
     # Update the conversation history in MongoDB
  #   collection.update_one({"user_id": user_id, "survey_id": project_id}, {"$set": {"conversations": conversations}}, upsert=True)
 
@@ -405,14 +406,14 @@ async def generateText(user_id: str, project_id: str, request: Request) -> JSONR
         upsert=True
     )
     x=type(response)
-    print("----------",x)
-    print(response)
+    logger.info("----------",x)
+    logger.info(response)
     #return JSONResponse(response)
     return response
     #return JSONResponse({"text": response})
 
 
-@app.post("/chat/{user_id}/{project_id}")
+@app.post("/chatx/{user_id}/{project_id}")
 async def generate_text(user_id: str, project_id: str, request: Request) -> JSONResponse:
     prompt = (await request.json()).get("prompt")
     if not prompt:
@@ -476,11 +477,82 @@ async def generate_text(user_id: str, project_id: str, request: Request) -> JSON
     )
 
     # Ensure the response is returned as JSON
-  #  print(type(response))
-    print("------------------------------------------")
-   # print(response)
+  #  logger.info(type(response))
+    logger.info("------------------------------------------")
+   # logger.info(response)
     return response
     #return JSONResponse({"text": response})
+
+
+
+@app.post("/chat/{user_id}/{project_id}")
+async def generate_text(user_id: str, project_id: str, request: Request) -> JSONResponse:
+    prompt = (await request.json()).get("prompt")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    # Validate user_id and project_id inputs
+    # Add your validation logic here
+
+    # Find the document containing the questions
+    document = collection.find_one({"user_id": user_id, "project_id": project_id})
+    if document:
+        conversations = document.get("conversations", [])
+    else:
+        conversations = []
+
+    # Add the current conversation to the history
+    conversations.append({"user_content": prompt, "bot_content": ""})
+
+    # Check if the pandas DataFrame agent is initialized for the cache_key
+    cache_key = f"pandas_df_agent-{user_id}-{project_id}"
+
+    if is_similar_to_bot_identity(prompt):
+        response = "I am CML Copilot, how can I help you?"
+    else:
+        if cache_key not in pandas_df_agents:
+            df = read_csv_file(user_id, project_id)
+            if df is None:
+                response = "Failed to load DataFrame"
+            else:
+                pandas_df_agents[cache_key] = create_pandas_dataframe_agent(
+                    llm,
+                    df,
+                    verbose=True,
+                   # agent_type="OPENAI_FUNCTIONS",
+                    agent_type="openai-tools",
+                    handle_parsing_errors=True,
+                )
+                try:
+                    response = pandas_df_agents[cache_key].run(prompt)
+                except OutputParserException as e:
+                    response = str(e)
+        else:
+            # Generate the response using the pandas DataFrame agent
+            try:
+                response = pandas_df_agents[cache_key].run(prompt)
+            except OutputParserException as e:
+                response = str(e)
+
+        # Filter out unwanted responses
+        if contains_unwanted_keywords(response, unwanted_keywords):
+            response = "I am not able to assist with detailed data analysis steps. Please ask a specific question related to the data."
+
+        # Filter out visualization-related responses
+        response = filter_response(response)
+
+    # Update the last conversation with the bot's response
+    conversations[-1]["bot_content"] = response
+
+    # Update the conversation history in MongoDB
+    collection.update_one(
+        {"user_id": user_id, "project_id": project_id},
+        {"$set": {"conversations": conversations}},
+        upsert=True
+    )
+
+    # Ensure the response is returned as JSON
+    return JSONResponse(response)       
 
 
 if __name__ == "__main__":

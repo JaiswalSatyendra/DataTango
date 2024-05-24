@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import glob
 from download_s3 import download_file
 import logging
+from langchain_core.exceptions import OutputParserException
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,11 @@ if not openai_api_key:
 # Initialize TTLCache for caching responses with a 1-day expiry time
 response_cache = TTLCache(maxsize=128, ttl=24 * 60 * 60)
 
+ #temperature=0, model="gpt-4o-2024-05-13", openai_api_key=openai_api_key, streaming=True
+
 # Initialize ChatOpenAI instance
 llm = ChatOpenAI(
-    temperature=0, model="gpt-4o-2024-05-13", openai_api_key=openai_api_key, streaming=True
+    temperature=0, model="gpt-4-turbo", openai_api_key=openai_api_key, streaming=True
 )
 
 # Initialize pandas DataFrame agents
@@ -141,7 +144,7 @@ def contains_unwanted_keywords(response: str, keywords: list) -> bool:
 def read_csv_file(user_id, project_id):
     # Construct the directory path
     
-    df = pd.read_csv("ccg_survey_continued_amber.csv")
+    df = pd.read_csv("Airlines.csv")
     print(df.head(2))
     return df
 
@@ -323,7 +326,81 @@ async def generate_text(user_id: str, project_id: str, request: Request) -> JSON
     )
 
     # Ensure the response is returned as JSON
+    print(type(response))
+    print("------------------------------------------")
+    print(response)
     return JSONResponse({"text": response})
+
+
+
+@app.post("/chatx/{user_id}/{project_id}")
+async def generate_text(user_id: str, project_id: str, request: Request) -> JSONResponse:
+    prompt = (await request.json()).get("prompt")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    # Validate user_id and project_id inputs
+    # Add your validation logic here
+
+    # Find the document containing the questions
+    document = collection.find_one({"user_id": user_id, "project_id": project_id})
+    if document:
+        conversations = document.get("conversations", [])
+    else:
+        conversations = []
+
+    # Add the current conversation to the history
+    conversations.append({"user_content": prompt, "bot_content": ""})
+
+    # Check if the pandas DataFrame agent is initialized for the cache_key
+    cache_key = f"pandas_df_agent-{user_id}-{project_id}"
+
+    if is_similar_to_bot_identity(prompt):
+        response = "I am CML Copilot, how can I help you?"
+    else:
+        if cache_key not in pandas_df_agents:
+            df = read_csv_file(user_id, project_id)
+            if df is None:
+                response = "Failed to load DataFrame"
+            else:
+                pandas_df_agents[cache_key] = create_pandas_dataframe_agent(
+                    llm,
+                    df,
+                    verbose=True,
+                   # agent_type="OPENAI_FUNCTIONS",
+                    agent_type="openai-tools",
+                    handle_parsing_errors=True,
+                )
+                try:
+                    response = pandas_df_agents[cache_key].run(prompt)
+                except OutputParserException as e:
+                    response = str(e)
+        else:
+            # Generate the response using the pandas DataFrame agent
+            try:
+                response = pandas_df_agents[cache_key].run(prompt)
+            except OutputParserException as e:
+                response = str(e)
+
+        # Filter out unwanted responses
+        if contains_unwanted_keywords(response, unwanted_keywords):
+            response = "I am not able to assist with detailed data analysis steps. Please ask a specific question related to the data."
+
+        # Filter out visualization-related responses
+        response = filter_response(response)
+
+    # Update the last conversation with the bot's response
+    conversations[-1]["bot_content"] = response
+
+    # Update the conversation history in MongoDB
+    collection.update_one(
+        {"user_id": user_id, "project_id": project_id},
+        {"$set": {"conversations": conversations}},
+        upsert=True
+    )
+
+    # Ensure the response is returned as JSON
+    return JSONResponse({"text": response})    
 
 
 

@@ -7,6 +7,9 @@ from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain.chat_models import ChatOpenAI
 from pymongo import MongoClient
 import json
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def extract_project_id(file_path):
     # Extract the project ID from the file name
@@ -79,10 +82,10 @@ def process_data_and_save_to_mongodb(user_id, project_id):
             break
 
     else:
-        print("No matching CSV file found in the directory.")
+        logger.info("No matching CSV file found in the directory.")
 
 # Example usage
-if __name__ == "__main__":
-    user_id = "65d5e841af6e64f8c032e8ed"  # Replace with the actual user_id
-    project_id = "6605470be7c1463e26b8fe29"  # Replace with the actual project_id
-    process_data_and_save_to_mongodb(user_id, project_id)
+# if __name__ == "__main__":
+#     user_id = "65d5e841af6e64f8c032e8ed"  # Replace with the actual user_id
+#     project_id = "6605470be7c1463e26b8fe29"  # Replace with the actual project_id
+#     process_data_and_save_to_mongodb(user_id, project_id)

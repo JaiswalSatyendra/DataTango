@@ -3,12 +3,15 @@
 .env.local
 .env.*.local
 
+# Ignore all CSV files (if desired)
+*.csv
+
 # Ignore CSV files
 ccg_survey_continued_amber.csv
 test_dataset.csv
+Airlines.csv
 
-# Ignore all CSV files (if desired)
-#*.csv
+
 
 # Ignore python files
 test1.py
